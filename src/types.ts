@@ -6,7 +6,7 @@ export interface LiveAuthConfig {
     /** Public project key (browser-safe) */
     publicKey: string;
 
-    /** Optional API base URL (defaults to liveauth.io) */
+    /** Optional API base URL (defaults to liveauth.app) */
     baseUrl?: string;
 }
 

@@ -20,7 +20,7 @@ export class LiveAuth {
             throw new Error('LiveAuth: publicKey is required');
         }
 
-        this.baseUrl = config.baseUrl ?? 'https://api.liveauth.io';
+        this.baseUrl = config.baseUrl ?? 'https://api.liveauth.app';
 
         this.headers = {
             'Content-Type': 'application/json',

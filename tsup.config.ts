@@ -5,11 +5,11 @@ export default defineConfig({
         index: 'src/index.ts',
         'pow.worker': 'src/pow.worker.ts'
     },
-    format: ['esm'],
-    target: 'es2020',
-    splitting: false,
+    format: ['esm', 'cjs'],
+    dts: true,
     sourcemap: true,
     clean: true,
-    dts: true,
-    outDir: 'dist'
+    target: 'es2020',
+    splitting: false,
+    outDir: 'dist',
 });
