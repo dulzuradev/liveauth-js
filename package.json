@@ -1,0 +1,19 @@
+{
+  "name": "@liveauth/sdk",
+  "version": "0.1.0",
+  "description": "LiveAuth browser SDK (PoW + Lightning human verification)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build"
+  }
+}
