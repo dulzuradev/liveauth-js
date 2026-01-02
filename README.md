@@ -37,7 +37,7 @@ Most humans never see the Lightning step.
 ## Installation (JavaScript)
 
 ```bash
-npm install @liveauth/sdk
+npm install @liveauth-labs/sdk
 ```
 
 ---
@@ -45,7 +45,7 @@ npm install @liveauth/sdk
 ## Basic Usage
 
 ```ts
-import { LiveAuth } from '@liveauth/sdk';
+import { LiveAuth } from '@liveauth-labs/sdk';
 
 const liveauth = new LiveAuth({
   publicKey: 'la_pk_XXXXXXXX'
