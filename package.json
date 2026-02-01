@@ -1,15 +1,17 @@
 {
   "name": "@liveauth-labs/sdk",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "LiveAuth browser SDK (PoW + Lightning human verification)",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
     }
   },
   "files": [
@@ -25,6 +27,16 @@
     "lightning",
     "bitcoin",
     "bot-protection",
-    "auth"
-  ]
+    "auth",
+    "verification"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dulzuradev/liveauth-js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  }
 }

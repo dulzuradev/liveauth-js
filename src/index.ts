@@ -5,11 +5,23 @@ import type {
     PowVerifyRequest,
     PowVerifyResponse,
     PowSolution,
-    AuthStartResponse,
-    AuthConfirmResponse,
-    LiveAuthConfig, LightningStart
+    LiveAuthConfig,
+    LightningStart
 } from './types';
-import {LiveAuthCancelledError, LiveAuthTimeoutError} from "./errors";
+import {
+    LiveAuthCancelledError,
+    LiveAuthTimeoutError,
+    LiveAuthNetworkError,
+    LiveAuthPowUnsupportedError,
+    LiveAuthPowTimeoutError
+} from './errors';
+import type { PowWorkerResult } from './pow.worker';
+
+// Re-export for consumers
+export * from './types';
+export * from './errors';
+
+const SDK_VERSION = '0.2.0';
 
 export class LiveAuth {
     private readonly baseUrl: string;
@@ -24,7 +36,8 @@ export class LiveAuth {
 
         this.headers = {
             'Content-Type': 'application/json',
-            'X-LW-Public': config.publicKey
+            'X-LW-Public': config.publicKey,
+            'X-LW-SDK-Version': SDK_VERSION
         };
     }
 
@@ -32,38 +45,86 @@ export class LiveAuth {
      * PUBLIC ENTRYPOINT
      * ====================================================== */
 
-    async verify(): Promise<LiveAuthResult> {
-        const startedAt = performance.now();
+    async verify(options: VerifyOptions = {}): Promise<LiveAuthResult> {
+        const { 
+            forceLightning = false, 
+            onProgress,
+            powTimeoutMs = 30_000,
+            maxPowIterations = 50_000_000
+        } = options;
 
-        const challenge = await this.getPowChallenge();
-        const solution = await this.solvePow(challenge);
-
-        const verifyRes = await this.verifyPow({
-            challengeHex: challenge.challengeHex,
-            nonce: solution.nonce,
-            hashHex: solution.hashHex,
-            expiresAtUnix: challenge.expiresAtUnix,
-            sig: challenge.sig
-        });
-
-        if (verifyRes.verified && verifyRes.token) {
-            return {
-                method: 'pow',
-                token: verifyRes.token,
-                solveMs: Math.round(performance.now() - startedAt),
-                difficultyBits: challenge.difficultyBits
-            };
-        }
-
-        if (verifyRes.fallback === 'lightning') {
+        // Skip PoW if forced to Lightning or PoW not supported
+        if (forceLightning) {
             const lightning = await this.startLightning();
             return {
                 method: 'lightning',
-                lightning
+                lightning,
+                diagnostics: { reason: 'forced_lightning' }
             };
         }
 
-        throw new Error('LiveAuth: verification failed');
+        if (!this.canUsePow()) {
+            const lightning = await this.startLightning();
+            return {
+                method: 'lightning',
+                lightning,
+                diagnostics: { reason: 'pow_unsupported' }
+            };
+        }
+
+        const startedAt = performance.now();
+
+        try {
+            const challenge = await this.getPowChallenge();
+            const solution = await this.solvePow(challenge, { 
+                onProgress, 
+                timeoutMs: powTimeoutMs,
+                maxIterations: maxPowIterations
+            });
+
+            const verifyRes = await this.verifyPow({
+                challengeHex: challenge.challengeHex,
+                nonce: solution.nonce,
+                hashHex: solution.hashHex,
+                expiresAtUnix: challenge.expiresAtUnix,
+                sig: challenge.sig
+            });
+
+            if (verifyRes.verified && verifyRes.token) {
+                return {
+                    method: 'pow',
+                    token: verifyRes.token,
+                    solveMs: Math.round(performance.now() - startedAt),
+                    difficultyBits: challenge.difficultyBits
+                };
+            }
+
+            if (verifyRes.fallback === 'lightning') {
+                const lightning = await this.startLightning();
+                return {
+                    method: 'lightning',
+                    lightning,
+                    diagnostics: { reason: 'pow_server_fallback' }
+                };
+            }
+
+            throw new Error('LiveAuth: verification failed');
+
+        } catch (err) {
+            // On PoW failure, fall back to Lightning
+            if (err instanceof LiveAuthPowTimeoutError || err instanceof LiveAuthPowUnsupportedError) {
+                const lightning = await this.startLightning();
+                return {
+                    method: 'lightning',
+                    lightning,
+                    diagnostics: { 
+                        reason: 'pow_failed', 
+                        detail: err.message 
+                    }
+                };
+            }
+            throw err;
+        }
     }
 
     /* ======================================================
@@ -71,22 +132,22 @@ export class LiveAuth {
      * ====================================================== */
 
     private async getPowChallenge(): Promise<PowChallengeResponse> {
-        const res = await fetch(`${this.baseUrl}/api/public/pow/challenge`, {
+        const res = await this.fetchWithRetry(`${this.baseUrl}/api/public/pow/challenge`, {
             headers: this.headers
         });
 
-        if (!res.ok) throw new Error('PoW challenge failed');
+        if (!res.ok) throw new LiveAuthNetworkError('PoW challenge failed');
         return res.json();
     }
 
     private async verifyPow(req: PowVerifyRequest): Promise<PowVerifyResponse> {
-        const res = await fetch(`${this.baseUrl}/api/public/pow/verify`, {
+        const res = await this.fetchWithRetry(`${this.baseUrl}/api/public/pow/verify`, {
             method: 'POST',
             headers: this.headers,
             body: JSON.stringify(req)
         });
 
-        if (!res.ok) throw new Error('PoW verify failed');
+        if (!res.ok) throw new LiveAuthNetworkError('PoW verify failed');
         return res.json();
     }
 
@@ -94,33 +155,65 @@ export class LiveAuth {
      * POW SOLVER (WORKER)
      * ====================================================== */
 
-    private solvePow(challenge: PowChallengeResponse): Promise<PowSolution> {
+    private solvePow(
+        challenge: PowChallengeResponse, 
+        options: {
+            onProgress?: (hashesPerSec: number, iterations: number) => void;
+            timeoutMs?: number;
+            maxIterations?: number;
+        } = {}
+    ): Promise<PowSolution> {
+        const { onProgress, timeoutMs = 30_000, maxIterations = 50_000_000 } = options;
+
         if (!this.canUsePow()) {
-            return Promise.reject(
-                new Error('LiveAuth: PoW not supported in this environment')
-            );
+            return Promise.reject(new LiveAuthPowUnsupportedError());
         }
 
         return new Promise((resolve, reject) => {
             const worker = new Worker(
                 new URL('./pow.worker.js', import.meta.url),
-                {type: 'module'}
+                { type: 'module' }
             );
 
-            worker.onmessage = e => {
+            const timeoutId = setTimeout(() => {
                 worker.terminate();
-                resolve(e.data);
+                reject(new LiveAuthPowTimeoutError(`PoW timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+
+            worker.onmessage = (e: MessageEvent<PowWorkerResult>) => {
+                const data = e.data;
+
+                if (data.type === 'progress') {
+                    onProgress?.(data.hashesPerSec ?? 0, data.iterations ?? 0);
+                    return;
+                }
+
+                if (data.type === 'timeout') {
+                    clearTimeout(timeoutId);
+                    worker.terminate();
+                    reject(new LiveAuthPowTimeoutError(`PoW hit max iterations (${maxIterations})`));
+                    return;
+                }
+
+                if (data.type === 'solution' && data.nonce !== undefined && data.hashHex) {
+                    clearTimeout(timeoutId);
+                    worker.terminate();
+                    resolve({ nonce: data.nonce, hashHex: data.hashHex });
+                    return;
+                }
             };
 
             worker.onerror = e => {
+                clearTimeout(timeoutId);
                 worker.terminate();
-                reject(e);
+                reject(new LiveAuthPowUnsupportedError(`Worker error: ${e.message}`));
             };
 
             worker.postMessage({
                 projectPublicKey: challenge.projectPublicKey,
                 challengeHex: challenge.challengeHex,
-                targetHex: challenge.targetHex
+                targetHex: challenge.targetHex,
+                maxIterations
             });
         });
     }
@@ -130,34 +223,17 @@ export class LiveAuth {
      * ====================================================== */
 
     private async startLightning(): Promise<LightningStart> {
-        const res = await fetch(`${this.baseUrl}/api/public/auth/start`, {
+        const res = await this.fetchWithRetry(`${this.baseUrl}/api/public/auth/start`, {
             method: 'POST',
             headers: this.headers,
-            body: JSON.stringify({userHint: 'browser'})
+            body: JSON.stringify({ userHint: 'browser' })
         });
 
         if (!res.ok) {
-            throw new Error('Lightning auth start failed');
+            throw new LiveAuthNetworkError('Lightning auth start failed');
         }
 
         return res.json();
-    }
-
-    private canUsePow(): boolean {
-        try {
-            // SSR / Node guard
-            if (typeof window === 'undefined') return false;
-
-            // Worker support
-            if (typeof Worker === 'undefined') return false;
-
-            // Basic URL support (needed for module workers)
-            if (typeof URL === 'undefined') return false;
-
-            return true;
-        } catch {
-            return false;
-        }
     }
 
     async pollLightning(
@@ -204,13 +280,13 @@ export class LiveAuth {
                     {
                         method: 'POST',
                         headers: this.headers,
-                        body: JSON.stringify({sessionId}),
+                        body: JSON.stringify({ sessionId }),
                         signal
                     }
                 );
 
                 if (!res.ok) {
-                    throw new Error('Lightning confirm failed');
+                    throw new LiveAuthNetworkError('Lightning confirm failed');
                 }
 
                 const json = await res.json();
@@ -226,7 +302,56 @@ export class LiveAuth {
         }
     }
 
+    /* ======================================================
+     * UTILITIES
+     * ====================================================== */
 
+    private canUsePow(): boolean {
+        try {
+            // SSR / Node guard
+            if (typeof window === 'undefined') return false;
+
+            // Worker support
+            if (typeof Worker === 'undefined') return false;
+
+            // Basic URL support (needed for module workers)
+            if (typeof URL === 'undefined') return false;
+
+            // Crypto.subtle required for SHA-256
+            if (typeof crypto === 'undefined' || !crypto.subtle) return false;
+
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private async fetchWithRetry(
+        url: string,
+        init?: RequestInit,
+        retries = 2,
+        backoffMs = 500
+    ): Promise<Response> {
+        let lastError: Error | undefined;
+
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                const res = await fetch(url, init);
+                return res;
+            } catch (err) {
+                lastError = err instanceof Error ? err : new Error(String(err));
+                
+                if (attempt < retries) {
+                    await sleep(backoffMs * Math.pow(2, attempt));
+                }
+            }
+        }
+
+        throw new LiveAuthNetworkError(
+            `Request failed after ${retries + 1} attempts`,
+            lastError
+        );
+    }
 }
 
 /* ======================================================
