@@ -157,11 +157,59 @@ const result = await liveauth.verify({
 
 Send the JWT to your backend and verify it using your LiveAuth secret key.
 
-The token includes:
-- `projectId`
-- `projectPublicKey`  
-- `authType` (`pow` or `lightning`)
-- Short expiration (default: 10 minutes)
+### Example (Node.js)
+
+```ts
+import jwt from 'jsonwebtoken';
+
+app.post('/api/verify-liveauth', (req, res) => {
+  const { token } = req.body;
+  
+  try {
+    // Verify JWT signature with your LiveAuth secret key
+    const decoded = jwt.verify(token, process.env.LIVEAUTH_SECRET_KEY);
+    
+    // Check expiration (JWT library handles this, but you can also check manually)
+    if (decoded.exp && decoded.exp < Date.now() / 1000) {
+      return res.status(401).json({ error: 'Token expired' });
+    }
+    
+    // Extract claims
+    const { projectId, projectPublicKey, authType, sub } = decoded;
+    
+    // Verify it matches your project
+    if (projectPublicKey !== process.env.LIVEAUTH_PUBLIC_KEY) {
+      return res.status(401).json({ error: 'Invalid project' });
+    }
+    
+    // Success - user is verified
+    res.json({ 
+      verified: true, 
+      authType, // 'pow' or 'lightning'
+      userId: sub 
+    });
+    
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+```
+
+### Token Claims
+
+The JWT contains:
+- `sub` - Unique user identifier (format: `pow:{projectId}:{challengeHex}` or `lightning:{invoiceId}`)
+- `projectId` - Your project's UUID
+- `projectPublicKey` - Your public API key
+- `authType` - Verification method: `pow` or `lightning`
+- `exp` - Expiration timestamp (default: 10 minutes from issuance)
+- `iat` - Issued at timestamp
+
+**Security Notes:**
+- Always verify the JWT signature using your secret key
+- Check the `projectPublicKey` claim matches your expected key
+- Respect the `exp` (expiration) claim
+- The `sub` claim is ephemeral - don't use it as a permanent user ID unless you're tracking sessions
 
 ## Debug Mode
 

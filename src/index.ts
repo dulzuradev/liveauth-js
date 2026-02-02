@@ -87,6 +87,7 @@ export class LiveAuth {
                 nonce: solution.nonce,
                 hashHex: solution.hashHex,
                 expiresAtUnix: challenge.expiresAtUnix,
+                difficultyBits: challenge.difficultyBits,
                 sig: challenge.sig
             });
 

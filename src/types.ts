@@ -59,6 +59,7 @@ export interface PowVerifyRequest {
     nonce: number;
     hashHex: string;
     expiresAtUnix: number;
+    difficultyBits: number;
     sig: string;
 }
 
