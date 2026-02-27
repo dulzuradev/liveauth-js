@@ -42,7 +42,8 @@ npm install @liveauth-labs/sdk
 import { LiveAuth } from '@liveauth-labs/sdk';
 
 const liveauth = new LiveAuth({
-  publicKey: 'la_pk_XXXXXXXX'
+  publicKey: 'la_pk_XXXXXXXX',  // Public key from dashboard
+  apiKey: 'la_sk_XXXXXXXX'     // Secret key from dashboard
 });
 
 const result = await liveauth.verify();
@@ -67,6 +68,8 @@ if (result.method === 'pow') {
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
 | `publicKey` | `string` | ✓ | Your LiveAuth public key |
+| `apiKey` | `string` | | Your LiveAuth secret key (for Lightning fallback) |
+| `baseUrl` | `string` | | API base URL (default: `https://api.liveauth.app`) |
 | `baseUrl` | `string` | | API base URL (default: `https://api.liveauth.app`) |
 
 ### `verify(options?)`
