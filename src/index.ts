@@ -171,14 +171,45 @@ export class LiveAuth {
             return Promise.reject(new LiveAuthPowUnsupportedError());
         }
 
+        // Inline worker as blob URL for better bundler compatibility
+        const workerCode = `
+            self.onmessage = async (e) => {
+                const { projectPublicKey, challengeHex, targetHex, maxIterations = 50000000, progressInterval = 10000 } = e.data;
+                let nonce = 0;
+                const startTime = performance.now();
+                let lastProgressTime = startTime;
+
+                while (nonce < maxIterations) {
+                    const input = projectPublicKey + ':' + challengeHex + ':' + nonce;
+                    const hash = await sha256Hex(input);
+                    if (hash <= targetHex) {
+                        const elapsed = performance.now() - startTime;
+                        self.postMessage({ type: 'solution', nonce, hashHex: hash, iterations: nonce + 1, hashesPerSec: Math.round((nonce + 1) / (elapsed / 1000)) });
+                        return;
+                    }
+                    nonce++;
+                    if (nonce % progressInterval === 0) {
+                        const now = performance.now();
+                        self.postMessage({ type: 'progress', iterations: nonce, hashesPerSec: Math.round(progressInterval / ((now - lastProgressTime) / 1000)) });
+                        lastProgressTime = now;
+                    }
+                }
+                self.postMessage({ type: 'timeout', iterations: nonce });
+            };
+            async function sha256Hex(input) {
+                const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+                return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+            }
+        `;
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const workerUrl = URL.createObjectURL(blob);
+
         return new Promise((resolve, reject) => {
-            const worker = new Worker(
-                new URL('./pow.worker.js', import.meta.url),
-                { type: 'module' }
-            );
+            const worker = new Worker(workerUrl);
 
             const timeoutId = setTimeout(() => {
                 worker.terminate();
+                URL.revokeObjectURL(workerUrl);
                 reject(new LiveAuthPowTimeoutError(`PoW timed out after ${timeoutMs}ms`));
             }, timeoutMs);
 
@@ -193,6 +224,7 @@ export class LiveAuth {
                 if (data.type === 'timeout') {
                     clearTimeout(timeoutId);
                     worker.terminate();
+                    URL.revokeObjectURL(workerUrl);
                     reject(new LiveAuthPowTimeoutError(`PoW hit max iterations (${maxIterations})`));
                     return;
                 }
@@ -200,6 +232,7 @@ export class LiveAuth {
                 if (data.type === 'solution' && data.nonce !== undefined && data.hashHex) {
                     clearTimeout(timeoutId);
                     worker.terminate();
+                    URL.revokeObjectURL(workerUrl);
                     resolve({ nonce: data.nonce, hashHex: data.hashHex });
                     return;
                 }
@@ -208,6 +241,7 @@ export class LiveAuth {
             worker.onerror = e => {
                 clearTimeout(timeoutId);
                 worker.terminate();
+                URL.revokeObjectURL(workerUrl);
                 reject(new LiveAuthPowUnsupportedError(`Worker error: ${e.message}`));
             };
 
