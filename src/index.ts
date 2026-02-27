@@ -37,6 +37,7 @@ export class LiveAuth {
         this.headers = {
             'Content-Type': 'application/json',
             'X-LW-Public': config.publicKey,
+            ...(config.apiKey && { 'Authorization': `Bearer ${config.apiKey}` }),
             'X-LW-SDK-Version': SDK_VERSION
         };
     }

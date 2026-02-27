@@ -1,6 +1,8 @@
 interface LiveAuthConfig {
     /** Public project key (browser-safe) */
     publicKey: string;
+    /** API secret key (for Lightning auth) - get from dashboard */
+    apiKey?: string;
     /** Optional API base URL (defaults to liveauth.app) */
     baseUrl?: string;
 }
