@@ -1,6 +1,6 @@
 {
   "name": "@liveauth-labs/sdk",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "LiveAuth browser SDK (PoW + Lightning human verification)",
   "type": "module",
   "main": "./dist/index.js",
