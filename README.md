@@ -122,6 +122,35 @@ Polls for Lightning payment confirmation.
 
 **Returns:** `Promise<string>` - The verification token
 
+## L402 Balance Purchase
+
+For AI agent / MCP use cases, you can prepay L402 credits via Lightning. This requires a **developer JWT** from Lightning login (`POST /api/dev/auth/start` → `confirm`).
+
+```ts
+import { BillingClient } from '@liveauth-labs/sdk';
+
+const billing = new BillingClient({ jwt: developerJwt });
+
+// Create a Lightning invoice for 1000 sats
+const purchase = await billing.purchaseCredits({ amountSats: 1000 });
+// purchase.bolt11 → show as QR code
+
+// Poll until paid
+const status = await billing.getPurchaseStatus(purchase.purchaseId, {
+  timeoutMs: 600_000  // 10 min
+});
+
+if (status.status === 'settled') {
+  console.log('Balance:', status.newBalanceSats, 'sats');
+}
+
+// Check current balance anytime
+const usage = await billing.getUsage();
+console.log('L402 balance:', usage.l402BalanceSats, 'sats');
+```
+
+---
+
 ## Error Handling
 
 ```ts

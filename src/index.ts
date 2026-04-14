@@ -396,3 +396,6 @@ export class LiveAuth {
 
 const sleep = (ms: number) =>
     new Promise(resolve => setTimeout(resolve, ms));
+
+// Re-export billing client
+export { BillingClient, type BillingClientConfig, type PurchaseResult, type PurchaseStatus } from './billing.js';
